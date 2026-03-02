@@ -1,51 +1,54 @@
 import streamlit as st
 import time
-from pymodbus.client import ModbusTcpClient
+from pylogix import PLC
 
-# Cấu hình trang hiển thị rộng rãi hơn
-st.set_page_config(page_title="PLC Monitor", layout="wide")
-st.title("🌐 Bảng Điều Khiển Giám Sát PLC Inovance")
+# Cấu hình trang
+st.set_page_config(page_title="PLC Monitor (EtherNet/IP)", layout="wide")
+st.title("🌐 Bảng Điều Khiển Giám Sát PLC (Giao thức EtherNet/IP)")
 
 # ==========================================
 # 1. GIAO DIỆN CÀI ĐẶT KẾT NỐI (SIDEBAR)
 # ==========================================
-# st.sidebar giúp tạo một khu vực cài đặt gọn gàng bên trái màn hình
 st.sidebar.header("⚙️ Cài đặt Kết nối")
 
-# Tạo ô nhập liệu cho người dùng tự gõ IP và Port
-# Giá trị mặc định vẫn để là 127.0.0.1 để bạn tiện thử mô phỏng
-user_ip = st.sidebar.text_input("Nhập địa chỉ IP của PLC:", value="127.0.0.1")
-user_port = st.sidebar.number_input("Cổng (Port):", value=502, step=1)
+# Ô nhập IP, sử dụng IP 192.168.1.2 từ bức ảnh của bạn làm mặc định
+user_ip = st.sidebar.text_input("Nhập địa chỉ IP của PLC:", value="192.168.1.2")
 
-# Chuyển công tắc bật/tắt sang thanh bên
+st.sidebar.markdown("---")
+st.sidebar.subheader("Tên Biến (Tag Names)")
+st.sidebar.caption("Nhập đúng tên biến đã khai báo trong AutoShop")
+
+# Ô nhập tên Tag thay vì địa chỉ số
+tag_running = st.sidebar.text_input("Tag Trạng thái chạy:", value="TrangThaiChay")
+tag_temp = st.sidebar.text_input("Tag Nhiệt độ:", value="NhietDo")
+
 run_monitoring = st.sidebar.toggle("🚀 Bắt đầu Kết nối & Giám sát")
 
-# Các hằng số địa chỉ trong PLC (Giữ nguyên)
-SLAVE_ID = 1
-COIL_ADDRESS = 0
-REGISTER_ADDRESS = 100
-
 # ==========================================
-# 2. HÀM LẤY DỮ LIỆU TỪ PLC (ĐÃ NÂNG CẤP)
+# 2. HÀM LẤY DỮ LIỆU TỪ PLC QUA ETHERNET/IP
 # ==========================================
-# Khai báo hàm nhận 2 tham số: ip và port
-def get_plc_data(ip, port):
-    client = ModbusTcpClient(ip, port=port, timeout=1) 
+def get_eip_data(ip, tag_run, tag_temperature):
     data = {"connected": False, "is_running": False, "temperature": 0}
     
-    if client.connect():
-        data["connected"] = True
+    # Khởi tạo kết nối với PLC qua thư viện pylogix
+    with PLC() as comm:
+        comm.IPAddress = ip
+        comm.SocketTimeout = 2.0 # Thời gian chờ tối đa 2 giây
         
-        # Đọc dữ liệu
-        coil_result = client.read_coils(address=COIL_ADDRESS, count=1, slave=SLAVE_ID)
-        if not coil_result.isError():
-            data["is_running"] = coil_result.bits[0]
+        # Đọc cùng lúc 2 Tag từ PLC
+        # pylogix trả về một đối tượng chứa Status và Value
+        ret_run = comm.Read(tag_run)
+        ret_temp = comm.Read(tag_temperature)
+        
+        # Kiểm tra xem việc đọc cả 2 biến có thành công không
+        if ret_run.Status == 'Success' and ret_temp.Status == 'Success':
+            data["connected"] = True
             
-        reg_result = client.read_holding_registers(address=REGISTER_ADDRESS, count=1, slave=SLAVE_ID)
-        if not reg_result.isError():
-            data["temperature"] = reg_result.registers[0]
+            # Xử lý kiểu dữ liệu: đảm bảo trạng thái là True/False
+            # và nhiệt độ là một con số
+            data["is_running"] = bool(ret_run.Value)
+            data["temperature"] = ret_temp.Value
             
-        client.close()
     return data
 
 # ==========================================
@@ -55,24 +58,26 @@ placeholder = st.empty()
 
 if run_monitoring:
     while True:
-        # Cung cấp IP và Port mà người dùng vừa nhập vào hàm
-        plc_data = get_plc_data(user_ip, user_port)
+        # Gọi hàm lấy dữ liệu với các thông số người dùng vừa nhập
+        plc_data = get_eip_data(user_ip, tag_running, tag_temp)
         
         with placeholder.container():
             if plc_data["connected"]:
-                st.success(f"🟢 Đã kết nối thành công tới PLC tại {user_ip}:{user_port}")
+                st.success(f"🟢 Đã kết nối thành công tới PLC tại {user_ip} (EtherNet/IP)")
                 
                 col1, col2 = st.columns(2)
                 with col1:
                     trang_thai = "Đang Chạy" if plc_data["is_running"] else "Đã Dừng"
-                    st.metric(label="Trạng thái máy", value=trang_thai)
+                    st.metric(label=f"Trạng thái ({tag_running})", value=trang_thai)
                 with col2:
-                    st.metric(label="Nhiệt độ hiện tại", value=f"{plc_data['temperature']} °C")
+                    st.metric(label=f"Nhiệt độ ({tag_temp})", value=f"{plc_data['temperature']} °C")
             else:
-                st.error(f"🔴 Mất kết nối! Không thể tìm thấy PLC tại {user_ip}:{user_port}...")
-                st.info("💡 Mẹo: Nếu chạy mô phỏng, hãy đảm bảo AutoShop đang ở trạng thái RUN và bật Modbus TCP.")
+                st.error(f"🔴 Không thể đọc dữ liệu từ {user_ip}!")
+                st.info("💡 Mẹo kiểm tra:\n"
+                        "1. Máy tính và PLC đã cùng mạng chưa (thử ping 192.168.1.2).\n"
+                        "2. Tên Tag nhập trên web có gõ sai chính tả so với trong AutoShop không.")
                 
         time.sleep(2)
 else:
     with placeholder.container():
-        st.info(f"Hệ thống đang chờ. Vui lòng kiểm tra IP (hiện tại: {user_ip}) và bật công tắc bên trái để bắt đầu.")
+        st.info("Hệ thống đang chờ. Vui lòng nhập IP, Tên Tag và bật công tắc để bắt đầu.")
