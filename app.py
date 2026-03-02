@@ -2,29 +2,41 @@ import streamlit as st
 import time
 from pymodbus.client import ModbusTcpClient
 
+# Cấu hình trang hiển thị rộng rãi hơn
+st.set_page_config(page_title="PLC Monitor", layout="wide")
+st.title("🌐 Bảng Điều Khiển Giám Sát PLC Inovance")
+
 # ==========================================
-# 1. CẤU HÌNH KẾT NỐI
+# 1. GIAO DIỆN CÀI ĐẶT KẾT NỐI (SIDEBAR)
 # ==========================================
-PLC_IP = '127.0.0.1' # Cần đổi thành IP thật (Public IP) khi chạy trên Streamlit Cloud
-PORT = 502
+# st.sidebar giúp tạo một khu vực cài đặt gọn gàng bên trái màn hình
+st.sidebar.header("⚙️ Cài đặt Kết nối")
+
+# Tạo ô nhập liệu cho người dùng tự gõ IP và Port
+# Giá trị mặc định vẫn để là 127.0.0.1 để bạn tiện thử mô phỏng
+user_ip = st.sidebar.text_input("Nhập địa chỉ IP của PLC:", value="127.0.0.1")
+user_port = st.sidebar.number_input("Cổng (Port):", value=502, step=1)
+
+# Chuyển công tắc bật/tắt sang thanh bên
+run_monitoring = st.sidebar.toggle("🚀 Bắt đầu Kết nối & Giám sát")
+
+# Các hằng số địa chỉ trong PLC (Giữ nguyên)
 SLAVE_ID = 1
 COIL_ADDRESS = 0
 REGISTER_ADDRESS = 100
 
-st.set_page_config(page_title="PLC Monitor", layout="centered")
-st.title("🌐 Bảng Điều Khiển Giám Sát PLC Inovance")
-
 # ==========================================
-# 2. HÀM LẤY DỮ LIỆU TỪ PLC
+# 2. HÀM LẤY DỮ LIỆU TỪ PLC (ĐÃ NÂNG CẤP)
 # ==========================================
-def get_plc_data():
-    # Sử dụng timeout ngắn để web không bị treo nếu mất kết nối
-    client = ModbusTcpClient(PLC_IP, port=PORT, timeout=1) 
+# Khai báo hàm nhận 2 tham số: ip và port
+def get_plc_data(ip, port):
+    client = ModbusTcpClient(ip, port=port, timeout=1) 
     data = {"connected": False, "is_running": False, "temperature": 0}
     
     if client.connect():
         data["connected"] = True
         
+        # Đọc dữ liệu
         coil_result = client.read_coils(address=COIL_ADDRESS, count=1, slave=SLAVE_ID)
         if not coil_result.isError():
             data["is_running"] = coil_result.bits[0]
@@ -37,23 +49,18 @@ def get_plc_data():
     return data
 
 # ==========================================
-# 3. GIAO DIỆN CẬP NHẬT TỰ ĐỘNG
+# 3. GIAO DIỆN HIỂN THỊ CHÍNH TỰ ĐỘNG
 # ==========================================
-# Nút công tắc để bật/tắt giám sát
-run_monitoring = st.toggle("🚀 Bật giám sát liên tục (Cập nhật mỗi 2 giây)")
-
-# Tạo một "khung trống" để ghi đè dữ liệu mới vào, giúp web không bị nháy
 placeholder = st.empty()
 
 if run_monitoring:
     while True:
-        # Lấy dữ liệu mới
-        plc_data = get_plc_data()
+        # Cung cấp IP và Port mà người dùng vừa nhập vào hàm
+        plc_data = get_plc_data(user_ip, user_port)
         
-        # Cập nhật thông tin vào khung trống
         with placeholder.container():
             if plc_data["connected"]:
-                st.success(f"🟢 Đang nhận dữ liệu trực tiếp từ PLC ({PLC_IP})...")
+                st.success(f"🟢 Đã kết nối thành công tới PLC tại {user_ip}:{user_port}")
                 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -62,11 +69,10 @@ if run_monitoring:
                 with col2:
                     st.metric(label="Nhiệt độ hiện tại", value=f"{plc_data['temperature']} °C")
             else:
-                st.error(f"🔴 Mất kết nối! Đang thử kết nối lại tới {PLC_IP}...")
+                st.error(f"🔴 Mất kết nối! Không thể tìm thấy PLC tại {user_ip}:{user_port}...")
+                st.info("💡 Mẹo: Nếu chạy mô phỏng, hãy đảm bảo AutoShop đang ở trạng thái RUN và bật Modbus TCP.")
                 
-        # Dừng 2 giây trước khi vòng lặp chạy lại để tránh làm quá tải PLC
         time.sleep(2)
 else:
-    # Xóa dữ liệu cũ nếu tắt giám sát
     with placeholder.container():
-        st.info("Hệ thống giám sát đang tạm dừng. Hãy bật công tắc phía trên để bắt đầu.")
+        st.info(f"Hệ thống đang chờ. Vui lòng kiểm tra IP (hiện tại: {user_ip}) và bật công tắc bên trái để bắt đầu.")
